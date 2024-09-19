@@ -1,0 +1,4 @@
+(lang dune 3.3)
+(name transaction_fuzzer)
+(implicit_transitive_deps false)
+(wrapped_executables false)

@@ -1,0 +1,79 @@
+(include ../../dune.flags.inc)
+(executable
+ (package transaction_fuzzer)
+;(name transaction_fuzzer)
+ (public_name transaction_fuzzer)
+ (modes exe)
+ (libraries
+   ;;opam libraries
+   async_unix
+   splittable_random
+   result
+   async
+   async_kernel
+   core
+   core_kernel
+   stdio
+   base
+   base.caml
+   sexplib0
+   base_quickcheck
+   ppx_inline_test.config
+   bisect_ppx.runtime
+   bisect_ppx.common
+   bin_prot
+   bin_prot.shape
+   ppx_version.runtime
+   ;;local libraries
+   pickles
+   kimchi_backend.pasta
+   kimchi_backend.pasta.basic
+   random_oracle
+   mina_compile_config
+   mina_runtime_config
+   transaction_witness
+   transaction_protocol_state
+   coda_genesis_ledger
+   pickles_types
+   mina_numbers
+   random_oracle_input
+   genesis_ledger_helper
+   mina_state
+   mina_generators
+   mina_base
+   currency
+   mina_ledger
+   mina_graphql
+   genesis_constants
+   secrets
+   transaction_snark
+   signature_lib
+   data_hash_lib
+   consensus
+   with_hash
+   genesis_ledger_helper.lib
+   snark_params
+   pickles.backend
+   kimchi_backend
+   mina_base.import
+   mina_transaction_logic
+   staged_ledger_diff
+   mina_wire_types
+   block_time
+   mina_transaction
+   bounded_types
+   ;; txn pool
+   parallel
+   pipe_lib
+   network_pool
+   logger
+   precomputed_values
+   trust_system
+   verifier
+   child_processes
+   network_peer
+ )
+ (preprocessor_deps ../../config.mlh)
+ (instrumentation (backend bisect_ppx))
+ (preprocess (pps ppx_custom_printf ppx_mina ppx_let ppx_sexp_conv
+                  ppx_hash ppx_compare ppx_deriving_yojson ppx_inline_test)))

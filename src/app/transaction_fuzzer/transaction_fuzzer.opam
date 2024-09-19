@@ -1,0 +1,10 @@
+opam-version: "1.2"
+version: "0.1"
+depends: [
+  "bisect_ppx" {dev & >= "2.5.0"}
+  "dune" {>= "2.7.0"}
+]
+
+build: [
+  ["dune" "build" "--only" "src" "--root" "." "-j" jobs "@install"]
+]
