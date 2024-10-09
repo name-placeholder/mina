@@ -64,6 +64,7 @@ let create_initial_accounts accounts =
   Lazy.force (Genesis_ledger.Packed.t packed)
 
 let set_initial_accounts (accounts : Account.Stable.Latest.t list) : Fp.t =
+  Ledger.close !ledger;
   let ledger_ = create_initial_accounts accounts in
   ledger := ledger_ ;
   Ledger.merkle_root ledger_
@@ -163,28 +164,32 @@ let read_length in_channel =
   let b3 = Char.to_int (Bytes.get len_bytes 3) in
   (b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3
 
-let rec loop () =
-  try
-    let len = read_length In_channel.stdin in
-    let cmd_bytes = read_exactly In_channel.stdin len in
-    let action = Bin_prot.Reader.of_bytes Action.bin_reader_t cmd_bytes in
-    let output = handle_action action in
-    let output_bytes = Bin_prot.Writer.to_bytes Output.bin_writer_t output in
-    let output_len = Bytes.length output_bytes in
+let loop () =
+  let continue = ref true in
+  while !continue do
+    try
+      let len = read_length In_channel.stdin in
+      let cmd_bytes = read_exactly In_channel.stdin len in
+      let action = Bin_prot.Reader.of_bytes Action.bin_reader_t cmd_bytes in
+      let output = handle_action action in
+      let output_bytes = Bin_prot.Writer.to_bytes Output.bin_writer_t output in
+      let output_len = Bytes.length output_bytes in
 
-    write_length Out_channel.stdout output_len ;
-    Out_channel.output_bytes Out_channel.stdout output_bytes ;
-    Out_channel.flush Out_channel.stdout ;
+      write_length Out_channel.stdout output_len ;
+      Out_channel.output_bytes Out_channel.stdout output_bytes ;
+      Out_channel.flush Out_channel.stdout ;
 
-    match action with Action.Exit -> () | _ -> loop ()
-  with
-  | End_of_file ->
-      () (* Gracefully handle EOF *)
-  | exn ->
-      let msg = Exn.to_string exn in
-      let bt = Printexc.get_backtrace () in
-      eprintf "Exception: %s\n%s\n" msg bt ;
-      loop ()
+      match action with Action.Exit -> continue := false | _ -> ()
+    with
+    | End_of_file ->
+        continue := false
+    | exn ->
+        let msg = Exn.to_string exn in
+        let bt = Printexc.get_backtrace () in
+        Core.Printf.eprintf "Exception: %s\n%s\n%!" msg bt;
+        continue := false
+  done
+
 
 let execute_subcommand =
   Command.basic
@@ -194,8 +199,7 @@ let execute_subcommand =
       let%map_open () = return () in
       fun () -> loop ())
 
-let () =
-  Command.run
+let () = Command.run
     (Command.group ~summary:"transaction_fuzzer"
        [ (Parallel.worker_command_name, Parallel.worker_command)
        ; ("execute", execute_subcommand)
