@@ -188,7 +188,7 @@ module Ledger_inner = struct
   (* Mask.Attached.create () fails, can't create an attached mask directly
      shadow create in order to create an attached mask
   *)
-  let create ?directory_name ~depth () =
+  let _create ?directory_name ~depth () =
     of_database (Db.create ?directory_name ~depth ())
 
   let create_ephemeral_with_base ~depth () =
@@ -200,6 +200,9 @@ module Ledger_inner = struct
   let create_ephemeral ~depth () =
     let _base, mask = create_ephemeral_with_base ~depth () in
     mask
+
+  let create ?directory_name ~depth () =
+    ignore directory_name ; create_ephemeral ~depth ()
 
   (** Create a new empty ledger.
 
