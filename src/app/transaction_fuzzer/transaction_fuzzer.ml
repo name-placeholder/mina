@@ -69,6 +69,8 @@ let set_initial_accounts (accounts : Account.Stable.Latest.t list) : Fp.t =
   ledger := ledger_ ;
   Ledger.merkle_root ledger_
 
+let get_accounts () = Ledger.to_list_sequential !ledger
+
 module ApplyTxResult = struct
   type t =
     { root_hash : Fp.Stable.V1.t
@@ -109,6 +111,7 @@ module Action = struct
   type t =
     | SetConstraintConstants of Genesis_constants.Constraint_constants.t
     | SetInitialAccounts of Account.Stable.Latest.t list
+    | GetAccounts
     | ApplyTx of User_command.Stable.Latest.t
     | Exit
   [@@deriving bin_io]
@@ -118,6 +121,7 @@ module Output = struct
   type t =
     | ConstraintConstantsSet
     | InitialAccountsSet of Fp.t
+    | Accounts of Account.Stable.Latest.t list
     | TxApplied of ApplyTxResult.t
     | ExitAck
   [@@deriving bin_io]
@@ -131,6 +135,9 @@ let handle_action (action : Action.t) : Output.t =
   | Action.SetInitialAccounts accounts ->
       let ledger_hash = set_initial_accounts accounts in
       Output.InitialAccountsSet ledger_hash
+  | Action.GetAccounts ->
+    let accounts = get_accounts () in 
+    Output.Accounts accounts
   | Action.ApplyTx user_command ->
       let tx_result = apply_tx user_command in
       Output.TxApplied tx_result
