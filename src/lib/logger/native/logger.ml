@@ -411,7 +411,8 @@ let log t ~level ~module_ ~location ?(metadata = []) ?event_id fmt =
       make_message t ~level ~module_ ~location ~metadata ~message ~event_id
         ~skip_merge_global_metadata:(Level.equal level Level.Internal)
     in
-    raw t message' ;
+    (*raw t message' ;*)
+    () ;
     match level with
     | Internal ->
         if t.itn_features then
@@ -425,6 +426,7 @@ let log t ~level ~module_ ~location ?(metadata = []) ?event_id fmt =
         ()
   in
   ksprintf f fmt
+
 
 type 'a log_function =
      t

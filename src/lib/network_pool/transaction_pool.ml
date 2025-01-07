@@ -1799,9 +1799,9 @@ let%test_module _ =
         in
         assert (List.length additional1 + List.length additional2 > 0) ;
         let report_additional commands a b =
-          Core.Printf.printf "%s user commands not in %s:\n" a b ;
+          Core.Printf.eprintf "%s user commands not in %s:\n" a b ;
           List.iter commands ~f:(fun c ->
-              Core.Printf.printf !"  %{Sexp}\n" (User_command.sexp_of_t c) )
+              Core.Printf.eprintf !"  %{Sexp}\n" (User_command.sexp_of_t c) )
         in
         if List.length additional1 > 0 then
           report_additional additional1 "actual" "expected" ;
@@ -2206,14 +2206,14 @@ let%test_module _ =
       ( match result with
       | Ok (`Accept, _, rejects) ->
           List.iter rejects ~f:(fun (cmd, err) ->
-              Core.Printf.printf
+              Core.Printf.eprintf
                 !"command was rejected because %s: %{Yojson.Safe}\n%!"
                 (Diff_versioned.Diff_error.to_string_name err)
                 (User_command.to_yojson cmd) )
       | Ok (`Reject, _, _) ->
           failwith "diff was rejected during application"
       | Error (`Other err) ->
-          Core.Printf.printf
+          Core.Printf.eprintf
             !"failed to apply diff to pool: %s\n%!"
             (Error.to_string_hum err) ) ;
       result
