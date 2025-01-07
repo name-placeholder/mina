@@ -50,6 +50,129 @@ let ledger = ref (Mina_ledger.Ledger.create_ephemeral ~depth:10 ())
 let constraint_constants : Genesis_constants.Constraint_constants.t ref =
   ref Genesis_constants.Constraint_constants.compiled
 
+module Staged_ledger = struct
+  type t = Mina_ledger.Ledger.t [@@deriving sexp]
+
+  let ledger = Fn.id
+end
+
+module Mock_transition_frontier = struct
+  open Pipe_lib
+
+  module Breadcrumb = struct
+    type t = Staged_ledger.t
+
+    let staged_ledger = Fn.id
+  end
+
+  type best_tip_diff =
+    { new_commands : User_command.Valid.t With_status.t list
+    ; removed_commands : User_command.Valid.t With_status.t list
+    ; reorg_best_tip : bool
+    }
+
+  type t = best_tip_diff Broadcast_pipe.Reader.t * Breadcrumb.t ref
+
+  let create : unit -> t * best_tip_diff Broadcast_pipe.Writer.t =
+   fun () ->
+    let pipe_r, pipe_w =
+      Broadcast_pipe.create
+        { new_commands = []; removed_commands = []; reorg_best_tip = false }
+    in
+    ((pipe_r, ledger), pipe_w)
+
+  let best_tip (_, best_tip) = !best_tip
+
+  let best_tip_diff_pipe (pipe, _) = pipe
+end
+
+let transaction_pool = ref None
+
+module Transaction_pool = struct
+  module Transaction_pool =
+    Network_pool.Transaction_pool.Make
+      (Staged_ledger)
+      (Mock_transition_frontier)
+
+  let setup with_logging =
+    Parallel.init_master () ;
+    let logger = if with_logging then Logger.create () else Logger.null () in
+    let precomputed_values = Lazy.force Precomputed_values.for_unit_tests in
+    let constraint_constants = !constraint_constants in
+    (* TODO: are these constants ok? *)
+    let consensus_constants = precomputed_values.consensus_constants in
+    let time_controller = Block_time.Controller.basic ~logger in
+    (* TODO: make proof level configurable *)
+    let proof_level = Genesis_constants.Proof_level.None in
+    let frontier, _best_tip_diff_w = Mock_transition_frontier.create () in
+    let _, _best_tip_ref = frontier in
+    let frontier_pipe_r, _frontier_pipe_w =
+      Pipe_lib.Broadcast_pipe.create @@ Some frontier
+    in
+    let trust_system = Trust_system.null () in
+    [%log info] "Starting verifier..." ;
+    let verifier =
+      Async.Thread_safe.block_on_async_exn (fun () ->
+          Verifier.create ~logger ~enable_internal_tracing:false ~proof_level ~constraint_constants
+            ~conf_dir:(Some (Filename.concat "/tmp/" (Printf.sprintf "ses_%d" (Random.int 1000000))))
+            ~pids:(Child_processes.Termination.create_pid_table ()) ())
+    in
+    let config =
+      Transaction_pool.Resource_pool.make_config ~trust_system
+        ~pool_max_size:3000 ~verifier
+        ~genesis_constants:Genesis_constants.compiled ~slot_tx_end:None
+    in
+    [%log info] "Creating transaction pool..." ;
+    let pool, _rsink, _lsink =
+      Transaction_pool.create ~config ~logger ~constraint_constants
+        ~consensus_constants ~time_controller
+        ~frontier_broadcast_pipe:frontier_pipe_r ~log_gossip_heard:false
+        ~on_remote_push:(Fn.const Async.Deferred.unit)
+    in
+    transaction_pool := Some pool
+
+  let get_pool () =
+    match !transaction_pool with
+    | None ->
+        failwith "transaction pool not setup"
+    | Some pool ->
+        pool
+
+  let diff_from_cmd cs =
+    let peer =
+      Network_peer.Peer.create
+        (Unix.Inet_addr.of_string "1.2.3.4")
+        ~peer_id:(Network_peer.Peer.Id.unsafe_of_string "not used")
+        ~libp2p_port:8302
+    in
+    (* For logal use Network_peer.Envelope.Sender.Local *)
+    let sender = Network_peer.Envelope.Sender.Remote peer in
+    Network_peer.Envelope.Incoming.wrap ~data:cs ~sender
+
+  (* todo wrap in exception *)
+(*  let apply_impl diff =
+    Async.Thread_safe.block_on_async_exn
+    @@ fun () ->
+    Transaction_pool.Resource_pool.Diff.unsafe_apply
+      (Transaction_pool.resource_pool (get_pool ()))
+      diff
+*)
+
+  let verify cs =
+    try
+      Async.Thread_safe.block_on_async_exn
+      @@ fun () ->
+      Transaction_pool.Resource_pool.Diff.verify
+        (Transaction_pool.resource_pool (get_pool ()))
+        (diff_from_cmd cs)
+    with e ->
+      let bt = Printexc.get_backtrace () in
+      let msg = Exn.to_string e in
+      Core_kernel.eprintf !"except: %s\n%s\n%!" msg bt ;
+      raise e
+end
+
+
 let set_constraint_constants
     (constants : Genesis_constants.Constraint_constants.t) =
   constraint_constants := constants
@@ -104,13 +227,15 @@ let apply_tx (command : User_command.Stable.Latest.t) : ApplyTxResult.t =
   with e ->
     let bt = Printexc.get_backtrace () in
     let msg = Exn.to_string e in
-    Core_kernel.printf !"except: %s\n%s\n%!" msg bt ;
+    Core_kernel.eprintf !"except: %s\n%s\n%!" msg bt ;
     raise e
 
 module Action = struct
   type t =
     | SetConstraintConstants of Genesis_constants.Constraint_constants.t
     | SetInitialAccounts of Account.Stable.Latest.t list
+    | SetupPool
+    | PoolVerify of User_command.Stable.Latest.t
     | GetAccounts
     | ApplyTx of User_command.Stable.Latest.t
     | Exit
@@ -121,6 +246,8 @@ module Output = struct
   type t =
     | ConstraintConstantsSet
     | InitialAccountsSet of Fp.t
+    | SetupPool
+    | PoolVerify of (User_command.Stable.Latest.t list, string) Result.t
     | Accounts of Account.Stable.Latest.t list
     | TxApplied of ApplyTxResult.t
     | ExitAck
@@ -135,6 +262,17 @@ let handle_action (action : Action.t) : Output.t =
   | Action.SetInitialAccounts accounts ->
       let ledger_hash = set_initial_accounts accounts in
       Output.InitialAccountsSet ledger_hash
+  | Action.SetupPool ->
+      Transaction_pool.setup false;
+      Output.SetupPool
+  | Action.PoolVerify user_command ->
+      let result = match Transaction_pool.verify [user_command] with
+      | Ok diff -> let commands = Transaction_pool.Transaction_pool.Resource_pool.Diff.t_of_verified (Network_peer.Envelope.Incoming.data diff)
+        in
+          Ok commands
+      | Error verification_error -> Error (Network_pool.Intf.Verification_error.to_short_string verification_error)
+      in
+      Output.PoolVerify result
   | Action.GetAccounts ->
     let accounts = get_accounts () in 
     Output.Accounts accounts
