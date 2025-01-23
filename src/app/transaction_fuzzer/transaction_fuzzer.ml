@@ -48,7 +48,7 @@ let txn_state_view : Zkapp_precondition.Protocol_state.View.t =
 let ledger = ref (Mina_ledger.Ledger.create_ephemeral ~depth:10 ())
 
 let constraint_constants : Genesis_constants.Constraint_constants.t ref =
-  ref Genesis_constants.Constraint_constants.compiled
+  ref Genesis_constants.Compiled.constraint_constants
 
 module Staged_ledger = struct
   type t = Mina_ledger.Ledger.t [@@deriving sexp]
@@ -102,6 +102,7 @@ module Transaction_pool = struct
     (* TODO: are these constants ok? *)
     let consensus_constants = precomputed_values.consensus_constants in
     let time_controller = Block_time.Controller.basic ~logger in
+    let block_window_duration = Float.of_int constraint_constants.block_window_duration_ms |> Time.Span.of_ms in
     (* TODO: make proof level configurable *)
     let proof_level = Genesis_constants.Proof_level.None in
     let frontier, _best_tip_diff_w = Mock_transition_frontier.create () in
@@ -113,14 +114,16 @@ module Transaction_pool = struct
     [%log info] "Starting verifier..." ;
     let verifier =
       Async.Thread_safe.block_on_async_exn (fun () ->
-          Verifier.create ~logger ~enable_internal_tracing:false ~proof_level ~constraint_constants
-            ~conf_dir:(Some (Filename.concat "/tmp/" (Printf.sprintf "ses_%d" (Random.int 1000000))))
-            ~pids:(Child_processes.Termination.create_pid_table ()) ())
+          Verifier.create ~commit_id:"" ~logger ~enable_internal_tracing:false ~proof_level
+            ~constraint_constants ~conf_dir:(Some (Filename.concat "/tmp/" 
+            (Printf.sprintf "ses_%d" (Random.int 1000000))))
+            ~pids:(Child_processes.Termination.create_pid_table ())
+            ~internal_trace_filename:"verifier-internal-trace.jsonl" ())
     in
     let config =
       Transaction_pool.Resource_pool.make_config ~trust_system
         ~pool_max_size:3000 ~verifier
-        ~genesis_constants:Genesis_constants.compiled ~slot_tx_end:None
+        ~genesis_constants:Genesis_constants.Compiled.genesis_constants ~slot_tx_end:None
     in
     [%log info] "Creating transaction pool..." ;
     let pool, _rsink, _lsink =
@@ -128,6 +131,7 @@ module Transaction_pool = struct
         ~consensus_constants ~time_controller
         ~frontier_broadcast_pipe:frontier_pipe_r ~log_gossip_heard:false
         ~on_remote_push:(Fn.const Async.Deferred.unit)
+        ~block_window_duration
     in
     transaction_pool := Some pool
 
@@ -270,7 +274,7 @@ let handle_action (action : Action.t) : Output.t =
       | Ok diff -> let commands = Transaction_pool.Transaction_pool.Resource_pool.Diff.t_of_verified (Network_peer.Envelope.Incoming.data diff)
         in
           Ok commands
-      | Error verification_error -> Error (Network_pool.Intf.Verification_error.to_short_string verification_error)
+      | Error verification_error -> Error (Error.to_string_hum (Network_pool.Intf.Verification_error.to_error verification_error))
       in
       Output.PoolVerify result
   | Action.GetAccounts ->

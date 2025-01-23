@@ -26,8 +26,9 @@
    ppx_version.runtime
    ;;local libraries
    pickles
-   kimchi_backend.pasta
-   kimchi_backend.pasta.basic
+   kimchi_backend_common
+   kimchi_pasta
+   kimchi_pasta.basic
    random_oracle
    mina_compile_config
    mina_runtime_config
